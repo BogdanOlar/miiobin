@@ -1,2 +1,2 @@
 # miiobin
-Miio binary protocol Rust implementation
+Miio binary protocol implemented in Rust
