@@ -34,7 +34,7 @@ pub struct MiPacket {
 }
 
 impl MiPacket {
-    /// Create a new `MiPacket` with default values
+    /// Create an empty `MiPacket` with default values
     ///
     /// # Arguments
     /// `device_id` - The device ID
@@ -71,7 +71,7 @@ impl MiPacket {
             return Err(Error::MagicNumber(magic_number));
         }
         else if src.len() != (length as usize) {
-            return Err(Error::BufferLengthMismatch((src.len(), length as usize)));
+            return Err(Error::BufferLength((src.len(), length as usize)));
         }
 
         let reserved: u32 =
@@ -134,10 +134,13 @@ impl MiPacket {
         }
 
         // decrypt payload
-        packet.decrypt(token);
+        if !packet.decrypt(token) {
+            return Err(Error::Decrypt);
+        }
 
         Ok(packet)
     }
+
 
     /// Pack the structure into a given `dest` buffer.
     ///
@@ -155,7 +158,7 @@ impl MiPacket {
         let packed_size: usize = self.packed_size();
 
         if dest.len() < packed_size {
-            return Err(Error::BufferLengthMismatch((packed_size, dest.len())));
+            return Err(Error::BufferLength((packed_size, dest.len())));
         }
 
         // magic number
@@ -214,11 +217,14 @@ impl MiPacket {
     /// `token` - Token is used to encrypt the payload and initialize the md5 field in the `dest` buffer
     ///
     pub fn pack_encrypt(&mut self, dest: &mut [u8], token: &[u8; 16]) -> Result<usize, Error> {
-        self.encrypt(token);
+        // decrypt payload
+        if !self.encrypt(token) {
+            return Err(Error::Encrypt);
+        }
         self.pack(dest, token)
     }
 
-    /// Decrypt the payload of the packet
+    /// Decrypt the payload of the packet, return `false` if decryption fails.
     ///
     /// # Arguments
     /// `token` - 16 byte token used to decrypt the payload
@@ -242,23 +248,25 @@ impl MiPacket {
         hasher.result(&mut iv);
 
         // Initialize cipher
-        let mut decrypter: Crypter = Crypter::new(
+        match Crypter::new(
             Cipher::aes_128_cbc(),
             Mode::Decrypt,
             &key,
-            Some(&iv)).unwrap();
-
-        // Decrypt payload into a temporary vector
-        let mut plaintext: Vec<u8> = vec![0u8; self.payload.len() + Cipher::aes_128_cbc().block_size()];
-
-        match decrypter.update(self.payload.as_slice(), plaintext.as_mut_slice()) {
-            Ok(count) => {
-                match decrypter.finalize(&mut plaintext[count..]) {
-                    Ok(count_finalize) => {
-                        plaintext.truncate(count + count_finalize);
-                        // Save decrypted payload
-                        self.payload = plaintext;
-                        return true;
+            Some(&iv)) {
+            Ok(mut _decrypter) => {
+                // Decrypt payload into a temporary vector
+                let mut plaintext: Vec<u8> = vec![0u8; self.payload.len() + Cipher::aes_128_cbc().block_size()];
+                match _decrypter.update(self.payload.as_slice(), plaintext.as_mut_slice()) {
+                    Ok(count) => {
+                        match _decrypter.finalize(&mut plaintext[count..]) {
+                            Ok(count_finalize) => {
+                                plaintext.truncate(count + count_finalize);
+                                // Save decrypted payload
+                                self.payload = plaintext;
+                                return true;
+                            }
+                            Err(_) => {}
+                        }
                     }
                     Err(_) => {}
                 }
@@ -266,20 +274,11 @@ impl MiPacket {
             Err(_) => {}
         }
 
+        // decryption failed
         false
-
-
-//        // Decrypt payload into a temporary vector
-//        let mut plaintext: Vec<u8> = vec![0u8; self.payload.len() + Cipher::aes_128_cbc().block_size()];
-//        let mut count: usize = decrypter.update(self.payload.as_slice(), plaintext.as_mut_slice()).unwrap();
-//        count += decrypter.finalize(&mut plaintext[count..]).unwrap();
-//        plaintext.truncate(count);
-//
-//        // Save decrypted payload
-//        self.payload = plaintext;
     }
 
-    /// Encrypt the payload of the packet.
+    /// Encrypt the payload of the packet, return `false` if encryption fails
     ///
     /// # Remarks
     /// The size of the encrypted payload may end up being larger than the size of the plaintext payload.
@@ -287,9 +286,9 @@ impl MiPacket {
     /// # Arguments
     /// `token` - 16 byte token used to encrypt the payload
     ///
-    pub fn encrypt(&mut self, token: &[u8; 16]) {
+    pub fn encrypt(&mut self, token: &[u8; 16]) -> bool{
         if self.payload.len() == 0 {
-            return;
+            return true;
         }
 
         // Initialize key
@@ -306,20 +305,33 @@ impl MiPacket {
         hasher.result(&mut iv);
 
         // Initialize cipher
-        let mut encrypter: Crypter = Crypter::new(
+        // Encrypt payload into a temporary vector, assign it to `self.payload` if successful
+        match Crypter::new(
             Cipher::aes_128_cbc(),
             Mode::Encrypt,
             &key,
-            Some(&iv)).unwrap();
+            Some(&iv)) {
+            Ok(mut _encrypter) => {
+                let mut cyphertext: Vec<u8> = vec![0u8; self.payload.len() + Cipher::aes_128_cbc().block_size()];
+                match _encrypter.update(self.payload.as_slice(), cyphertext.as_mut_slice()) {
+                    Ok(count) => {
+                        match _encrypter.finalize(&mut cyphertext[count..]) {
+                            Ok(count_finalize) => {
+                                cyphertext.truncate(count + count_finalize);
+                                self.payload = cyphertext;
+                                return true;
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+            Err(_) => {}
+        }
 
-        // Encrypt payload into a temporary vector
-        let mut cyphertext: Vec<u8> = vec![0u8; self.payload.len() + Cipher::aes_128_cbc().block_size()];
-        let mut count: usize = encrypter.update(self.payload.as_slice(), cyphertext.as_mut_slice()).unwrap();
-        count += encrypter.finalize(&mut cyphertext[count..]).unwrap();
-        cyphertext.truncate(count);
-
-        // Save encrypted payload
-        self.payload = cyphertext;
+        // encryption failed
+        false
     }
 
     /// Return the size of the packet when packed into an output buffer.
@@ -328,7 +340,7 @@ impl MiPacket {
         RAW_HEADER_SIZE + self.payload.len()
     }
 
-    /// Return the size of the packet when encrypted and packed into an output buffer.
+    /// Return the size of the unencrypted packet when encrypted and packed into an output buffer.
     ///
     pub fn packed_encrypted_size(&self) -> usize {
         RAW_HEADER_SIZE + self.payload.len() + Cipher::aes_128_cbc().block_size()
@@ -340,7 +352,9 @@ impl MiPacket {
 pub enum Error {
     PacketTooSmall(usize),
     MagicNumber(u16),
-    BufferLengthMismatch((usize, usize)),
+    BufferLength((usize, usize)),
+    Encrypt,
+    Decrypt,
     Md5Mismatch,
 }
 
@@ -352,8 +366,10 @@ impl fmt::Display for Error {
                 format_args!("Packet length < {} bytes: {}", RAW_HEADER_SIZE, packet_length)),
             Error::MagicNumber(magic_number) => f.write_fmt(
                 format_args!("Wrong magic number: {}", magic_number)),
-            Error::BufferLengthMismatch((expected, found)) => f.write_fmt(
+            Error::BufferLength((expected, found)) => f.write_fmt(
                 format_args!("Expected length: {}, found: {}", expected, found)),
+            Error::Encrypt => f.write_str("Encryption failed"),
+            Error::Decrypt => f.write_str("Decryption failed"),
             Error::Md5Mismatch => f.write_str("Calculated MD5 does not match packet MD5 field"),
         }
     }
@@ -363,9 +379,11 @@ impl fmt::Display for Error {
 impl StdError for Error {
     fn description(&self) -> &str {
         match *self {
-            Error::PacketTooSmall(packet_length) => "Packet length is smaller than 32 bytes.",
-            Error::MagicNumber(magic_number) => "Wrong magic number",
-            Error::BufferLengthMismatch((expected, found)) => "Packet length does not match expected length",
+            Error::PacketTooSmall(_packet_length) => "Packet length is smaller than 32 bytes.",
+            Error::MagicNumber(_magic_number) => "Wrong magic number",
+            Error::BufferLength((_expected, _found)) => "Packet length does not match expected length",
+            Error::Encrypt => "Encryption failed",
+            Error::Decrypt => "Decryption failed",
             Error::Md5Mismatch => "Calculated MD5 does not match packet MD5 field",
         }
     }
@@ -386,9 +404,6 @@ mod tests {
                                       \"MyRouterSSID\",\"passwd\":\"MyRouterPassword\",\"uid\":9876543210,\"bind_key\":\
                                       \"\",\"config_type\":\"app\",\"country_domain\":\"de\",\"wifi_config\":{\"cc\":\
                                       \"DE\"},\"gmt_offset\":3600,\"tz\":\"Europe\\/Prague\"}}";
-
-    /// Example of plaintext payload sent from the device being provisioned
-    const TEST_PAYLOAD_RESPONSE: &[u8; 34] = b"\"{\"id\":1234567890,\"result\":[\"OK\"]}";
 
     /// Packet containing the `TEST_PAYLOAD` in plaintext
     const TEST_PACKET_PLAINTEXT: [u8; 279] = [33, 49, 1, 23, 0, 0, 0, 0, 7, 91, 205, 21, 0, 0, 130, 53, 76, 166, 235,
@@ -443,7 +458,7 @@ mod tests {
         assert_eq!(packet.payload.len(), 0);
 
         // test error
-        let packet_error = MiPacket::parse(&MI_DISCOVER_PACKET[..MI_DISCOVER_PACKET.len()-1]).unwrap_err();
+        let _packet_error = MiPacket::parse(&MI_DISCOVER_PACKET[..MI_DISCOVER_PACKET.len()-1]).unwrap_err();
     }
 
     #[test]
@@ -468,12 +483,12 @@ mod tests {
         packet.payload.extend_from_slice(TEST_PAYLOAD);
 
         // Test encrypting
-        packet.encrypt(&TEST_TOKEN);
+        assert!(packet.encrypt(&TEST_TOKEN));
         let bytecount = packet.pack(&mut buffer, &TEST_TOKEN).unwrap();
         assert_eq!(&buffer[..bytecount], &TEST_PACKET_ENCRYPTED[..]);
 
         // Test decrypting
-        packet.decrypt(&TEST_TOKEN);
+        assert!(packet.decrypt(&TEST_TOKEN));
         let bytecount = packet.pack(&mut buffer, &TEST_TOKEN).unwrap();
         assert_eq!(&buffer[..bytecount], &TEST_PACKET_PLAINTEXT[..]);
     }
