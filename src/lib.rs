@@ -224,14 +224,14 @@ impl MiPacket {
         self.pack(dest, token)
     }
 
-    /// Decrypt the payload of the packet, return `false` if decryption fails.
+    /// Decrypt the payload of the packet, return `true` if decryption was successful or if payload size is 0
     ///
     /// # Arguments
     /// `token` - 16 byte token used to decrypt the payload
     ///
     pub fn decrypt(&mut self, token: &[u8; 16]) -> bool{
         if self.payload.len() == 0 {
-            return false;
+            return true;
         }
 
         // Initialize key
@@ -248,30 +248,17 @@ impl MiPacket {
         hasher.result(&mut iv);
 
         // Initialize cipher
-        match Crypter::new(
-            Cipher::aes_128_cbc(),
-            Mode::Decrypt,
-            &key,
-            Some(&iv)) {
-            Ok(mut _decrypter) => {
-                // Decrypt payload into a temporary vector
-                let mut plaintext: Vec<u8> = vec![0u8; self.payload.len() + Cipher::aes_128_cbc().block_size()];
-                match _decrypter.update(self.payload.as_slice(), plaintext.as_mut_slice()) {
-                    Ok(count) => {
-                        match _decrypter.finalize(&mut plaintext[count..]) {
-                            Ok(count_finalize) => {
-                                plaintext.truncate(count + count_finalize);
-                                // Save decrypted payload
-                                self.payload = plaintext;
-                                return true;
-                            }
-                            Err(_) => {}
-                        }
-                    }
-                    Err(_) => {}
+        if let Ok(mut _decrypter) = Crypter::new(Cipher::aes_128_cbc(), Mode::Decrypt, &key, Some(&iv)) {
+            // Decrypt payload into a temporary vector
+            let mut plaintext: Vec<u8> = vec![0u8; self.payload.len() + Cipher::aes_128_cbc().block_size()];
+            if let Ok(count) = _decrypter.update(self.payload.as_slice(), plaintext.as_mut_slice()) {
+                if let Ok(count_finalize) = _decrypter.finalize(&mut plaintext[count..]) {
+                    plaintext.truncate(count + count_finalize);
+                    // Save decrypted payload
+                    self.payload = plaintext;
+                    return true;
                 }
             }
-            Err(_) => {}
         }
 
         // decryption failed
@@ -286,7 +273,7 @@ impl MiPacket {
     /// # Arguments
     /// `token` - 16 byte token used to encrypt the payload
     ///
-    pub fn encrypt(&mut self, token: &[u8; 16]) -> bool{
+    pub fn encrypt(&mut self, token: &[u8; 16]) -> bool {
         if self.payload.len() == 0 {
             return true;
         }
@@ -306,28 +293,15 @@ impl MiPacket {
 
         // Initialize cipher
         // Encrypt payload into a temporary vector, assign it to `self.payload` if successful
-        match Crypter::new(
-            Cipher::aes_128_cbc(),
-            Mode::Encrypt,
-            &key,
-            Some(&iv)) {
-            Ok(mut _encrypter) => {
-                let mut cyphertext: Vec<u8> = vec![0u8; self.payload.len() + Cipher::aes_128_cbc().block_size()];
-                match _encrypter.update(self.payload.as_slice(), cyphertext.as_mut_slice()) {
-                    Ok(count) => {
-                        match _encrypter.finalize(&mut cyphertext[count..]) {
-                            Ok(count_finalize) => {
-                                cyphertext.truncate(count + count_finalize);
-                                self.payload = cyphertext;
-                                return true;
-                            }
-                            Err(_) => {}
-                        }
-                    }
-                    Err(_) => {}
+        if let Ok(mut _encrypter) = Crypter::new(Cipher::aes_128_cbc(), Mode::Encrypt, &key, Some(&iv)) {
+            let mut cyphertext: Vec<u8> = vec![0u8; self.payload.len() + Cipher::aes_128_cbc().block_size()];
+            if let Ok(count) = _encrypter.update(self.payload.as_slice(), cyphertext.as_mut_slice()) {
+                if let Ok(count_finalize) = _encrypter.finalize(&mut cyphertext[count..]) {
+                    cyphertext.truncate(count + count_finalize);
+                    self.payload = cyphertext;
+                    return true;
                 }
             }
-            Err(_) => {}
         }
 
         // encryption failed
