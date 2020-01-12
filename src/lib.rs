@@ -3,8 +3,6 @@
 //! This protocol is used by the MiHome smartphone app to communicate with the robot on
 //! a local network (including for provisioning the robot)
 //!
-//! The `MiPacket` is used to encapsulate encrypted messages (`MiMessage`)
-//!
 //!
 
 use std::fmt;
@@ -134,8 +132,8 @@ impl MiPacket {
         }
 
         // decrypt payload
-        if !packet.decrypt(token) {
-            return Err(Error::Decrypt);
+        if let Err(e) = packet.decrypt(token) {
+            return Err(e);
         }
 
         Ok(packet)
@@ -218,8 +216,8 @@ impl MiPacket {
     ///
     pub fn pack_encrypt(&mut self, dest: &mut [u8], token: &[u8; 16]) -> Result<usize, Error> {
         // decrypt payload
-        if !self.encrypt(token) {
-            return Err(Error::Encrypt);
+        if let Err(e) = self.encrypt(token) {
+            return Err(e);
         }
         self.pack(dest, token)
     }
@@ -229,9 +227,9 @@ impl MiPacket {
     /// # Arguments
     /// `token` - 16 byte token used to decrypt the payload
     ///
-    pub fn decrypt(&mut self, token: &[u8; 16]) -> bool{
+    pub fn decrypt(&mut self, token: &[u8; 16]) -> Result<(), Error>{
         if self.payload.len() == 0 {
-            return true;
+            return Ok(());
         }
 
         // Initialize key
@@ -248,21 +246,21 @@ impl MiPacket {
         hasher.result(&mut iv);
 
         // Initialize cipher
-        if let Ok(mut _decrypter) = Crypter::new(Cipher::aes_128_cbc(), Mode::Decrypt, &key, Some(&iv)) {
+        if let Ok(mut decrypter) = Crypter::new(Cipher::aes_128_cbc(), Mode::Decrypt, &key, Some(&iv)) {
             // Decrypt payload into a temporary vector
             let mut plaintext: Vec<u8> = vec![0u8; self.payload.len() + Cipher::aes_128_cbc().block_size()];
-            if let Ok(count) = _decrypter.update(self.payload.as_slice(), plaintext.as_mut_slice()) {
-                if let Ok(count_finalize) = _decrypter.finalize(&mut plaintext[count..]) {
+            if let Ok(count) = decrypter.update(self.payload.as_slice(), plaintext.as_mut_slice()) {
+                if let Ok(count_finalize) = decrypter.finalize(&mut plaintext[count..]) {
                     plaintext.truncate(count + count_finalize);
                     // Save decrypted payload
                     self.payload = plaintext;
-                    return true;
+                    return Ok(());
                 }
             }
         }
 
         // decryption failed
-        false
+        Err(Error::Decrypt)
     }
 
     /// Encrypt the payload of the packet, return `false` if encryption fails
@@ -273,9 +271,9 @@ impl MiPacket {
     /// # Arguments
     /// `token` - 16 byte token used to encrypt the payload
     ///
-    pub fn encrypt(&mut self, token: &[u8; 16]) -> bool {
+    pub fn encrypt(&mut self, token: &[u8; 16]) -> Result<(),Error> {
         if self.payload.len() == 0 {
-            return true;
+            return Ok(());
         }
 
         // Initialize key
@@ -292,20 +290,20 @@ impl MiPacket {
         hasher.result(&mut iv);
 
         // Initialize cipher
-        // Encrypt payload into a temporary vector, assign it to `self.payload` if successful
-        if let Ok(mut _encrypter) = Crypter::new(Cipher::aes_128_cbc(), Mode::Encrypt, &key, Some(&iv)) {
+        if let Ok(mut encrypter) = Crypter::new(Cipher::aes_128_cbc(), Mode::Encrypt, &key, Some(&iv)) {
+            // Encrypt payload into a temporary vector, assign it to `self.payload` if successful
             let mut cyphertext: Vec<u8> = vec![0u8; self.payload.len() + Cipher::aes_128_cbc().block_size()];
-            if let Ok(count) = _encrypter.update(self.payload.as_slice(), cyphertext.as_mut_slice()) {
-                if let Ok(count_finalize) = _encrypter.finalize(&mut cyphertext[count..]) {
+            if let Ok(count) = encrypter.update(self.payload.as_slice(), cyphertext.as_mut_slice()) {
+                if let Ok(count_finalize) = encrypter.finalize(&mut cyphertext[count..]) {
                     cyphertext.truncate(count + count_finalize);
                     self.payload = cyphertext;
-                    return true;
+                    return Ok(());
                 }
             }
         }
 
         // encryption failed
-        false
+        return Err(Error::Encrypt);
     }
 
     /// Return the size of the packet when packed into an output buffer.
@@ -457,12 +455,12 @@ mod tests {
         packet.payload.extend_from_slice(TEST_PAYLOAD);
 
         // Test encrypting
-        assert!(packet.encrypt(&TEST_TOKEN));
+        packet.encrypt(&TEST_TOKEN).unwrap();
         let bytecount = packet.pack(&mut buffer, &TEST_TOKEN).unwrap();
         assert_eq!(&buffer[..bytecount], &TEST_PACKET_ENCRYPTED[..]);
 
         // Test decrypting
-        assert!(packet.decrypt(&TEST_TOKEN));
+        packet.decrypt(&TEST_TOKEN).unwrap();
         let bytecount = packet.pack(&mut buffer, &TEST_TOKEN).unwrap();
         assert_eq!(&buffer[..bytecount], &TEST_PACKET_PLAINTEXT[..]);
     }
