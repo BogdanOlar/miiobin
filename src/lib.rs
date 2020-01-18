@@ -15,6 +15,9 @@ use openssl::symm::{Cipher, Mode, Crypter};
 pub const MI_DISCOVER_PACKET: [u8; 32] = [0x21, 0x31, 0x00, 0x20, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
 
+/// The UDP port used by discovery messages
+pub const MI_DISCOVER_UDP_PORT: u16 = 54321;
+
 /// Minimum size of a MiIO packet
 const RAW_HEADER_SIZE: usize = 32;
 
@@ -222,7 +225,7 @@ impl MiPacket {
         self.pack(dest, token)
     }
 
-    /// Decrypt the payload of the packet, return `true` if decryption was successful or if payload size is 0
+    /// Decrypt the payload of the packet, return `Result::Ok(())` if decryption was successful or if payload size is 0
     ///
     /// # Arguments
     /// `token` - 16 byte token used to decrypt the payload
@@ -263,7 +266,7 @@ impl MiPacket {
         Err(Error::Decrypt)
     }
 
-    /// Encrypt the payload of the packet, return `false` if encryption fails
+    /// Encrypt the payload of the packet, return `Result::Ok(())` if encryption is successful or if payload size is 0
     ///
     /// # Remarks
     /// The size of the encrypted payload may end up being larger than the size of the plaintext payload.

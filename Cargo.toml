@@ -2,7 +2,10 @@
 name = "miiobin"
 version = "0.1.2"
 authors = ["Bogdan Olar"]
+repository = "https://github.com/BogdanOlar/miiobin"
 edition = "2018"
+readme = "README.md"
+license = "MPL-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
