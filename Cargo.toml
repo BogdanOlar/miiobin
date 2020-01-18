@@ -1,6 +1,6 @@
 [package]
 name = "miiobin"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["Bogdan Olar"]
 repository = "https://github.com/BogdanOlar/miiobin"
 edition = "2018"
